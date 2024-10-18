@@ -696,7 +696,7 @@ class WasmTagObject
 
   // Checks whether the given {sig} has the same parameter types as the
   // serialized signature stored within this tag object.
-  bool MatchesSignature(uint32_t expected_canonical_type_index);
+  bool MatchesSignature(wasm::CanonicalTypeIndex expected_index);
 
   static Handle<WasmTagObject> New(
       Isolate* isolate, const wasm::FunctionSig* sig,
@@ -1267,6 +1267,7 @@ class WasmTypeInfo
     : public TorqueGeneratedWasmTypeInfo<WasmTypeInfo, HeapObject> {
  public:
   DECL_EXTERNAL_POINTER_ACCESSORS(native_type, Address)
+  inline wasm::ModuleTypeIndex type_index() const;
   DECL_TRUSTED_POINTER_ACCESSORS(trusted_data, WasmTrustedInstanceData)
 
   DECL_PRINTER(WasmTypeInfo)

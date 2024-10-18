@@ -1735,7 +1735,8 @@ Handle<WasmFuncRef> WasmTrustedInstanceData::GetOrCreateFuncRef(
 
   // TODO(14034): Create funcref RTTs lazily?
   DirectHandle<Map> rtt{
-      Cast<Map>(trusted_instance_data->managed_object_maps()->get(sig_index)),
+      Cast<Map>(
+          trusted_instance_data->managed_object_maps()->get(sig_index.index)),
       isolate};
 
 #if V8_ENABLE_SANDBOX
@@ -2124,9 +2125,9 @@ Handle<WasmTagObject> WasmTagObject::New(
   return tag_wrapper;
 }
 
-bool WasmTagObject::MatchesSignature(uint32_t expected_canonical_type_index) {
-  return static_cast<uint32_t>(this->canonical_type_index()) ==
-         expected_canonical_type_index;
+bool WasmTagObject::MatchesSignature(wasm::CanonicalTypeIndex expected_index) {
+  return wasm::CanonicalTypeIndex{static_cast<uint32_t>(
+             this->canonical_type_index())} == expected_index;
 }
 
 const wasm::CanonicalSig* WasmCapiFunction::sig() const {
@@ -2340,7 +2341,9 @@ bool WasmCapiFunction::MatchesSignature(
     wasm::CanonicalTypeIndex other_canonical_sig_index) const {
 #if DEBUG
   // TODO(14034): Change this if indexed types are allowed.
-  for (wasm::ValueType type : this->sig()->all()) CHECK(!type.has_index());
+  for (wasm::CanonicalValueType type : this->sig()->all()) {
+    CHECK(!type.has_index());
+  }
 #endif
   // TODO(14034): Check for subtyping instead if C API functions can define
   // signature supertype.
@@ -2702,10 +2705,9 @@ Handle<Map> CreateFuncRefMap(Isolate* isolate, Handle<Map> opt_rtt_parent) {
   const int inobject_properties = 0;
   const InstanceType instance_type = WASM_FUNC_REF_TYPE;
   const ElementsKind elements_kind = TERMINAL_FAST_ELEMENTS_KIND;
-  constexpr uint32_t kNoIndex = ~0u;
   DirectHandle<WasmTypeInfo> type_info = isolate->factory()->NewWasmTypeInfo(
       kNullAddress, opt_rtt_parent, Handle<WasmTrustedInstanceData>(),
-      kNoIndex);
+      wasm::ModuleTypeIndex::Invalid());
   constexpr int kInstanceSize = WasmFuncRef::kSize;
   DCHECK_EQ(
       kInstanceSize,
@@ -2739,14 +2741,14 @@ Handle<WasmJSFunction> WasmJSFunction::New(Isolate* isolate,
   DirectHandle<WeakFixedArray> canonical_rtts(
       isolate->heap()->wasm_canonical_rtts(), isolate);
 
-  Tagged<MaybeObject> maybe_canonical_map = canonical_rtts->get(sig_id);
+  Tagged<MaybeObject> maybe_canonical_map = canonical_rtts->get(sig_id.index);
 
   if (!maybe_canonical_map.IsCleared()) {
     rtt = direct_handle(
         Cast<Map>(maybe_canonical_map.GetHeapObjectAssumeWeak()), isolate);
   } else {
     rtt = CreateFuncRefMap(isolate, Handle<Map>());
-    canonical_rtts->set(sig_id, MakeWeak(*rtt));
+    canonical_rtts->set(sig_id.index, MakeWeak(*rtt));
   }
 
   DirectHandle<Code> js_to_js_wrapper_code =
@@ -2947,14 +2949,9 @@ MaybeHandle<Object> JSToWasmObject(Isolate* isolate, Handle<Object> value,
       case HeapType::kNoExn:
         *error_message = "invalid type (ref null noexn)";
         return {};
-      default: {
-        HeapType::Representation repr =
-            expected.heap_representation_non_shared();
-        bool is_extern_subtype =
-            repr == HeapType::kExtern || repr == HeapType::kNoExtern ||
-            repr == HeapType::kExn || repr == HeapType::kNoExn;
-        return is_extern_subtype ? value : isolate->factory()->wasm_null();
-      }
+      default:
+        return expected.use_wasm_null() ? isolate->factory()->wasm_null()
+                                        : value;
     }
   }
 
@@ -3093,11 +3090,11 @@ MaybeHandle<Object> JSToWasmObject(Isolate* isolate, Handle<Object> value,
       } else if (IsWasmStruct(*value) || IsWasmArray(*value)) {
         auto wasm_obj = Cast<WasmObject>(value);
         Tagged<WasmTypeInfo> type_info = wasm_obj->map()->wasm_type_info();
-        uint32_t real_idx = type_info->type_index();
+        ModuleTypeIndex real_idx = type_info->type_index();
         const WasmModule* real_module =
             type_info->trusted_data(isolate)->module();
         CanonicalTypeIndex real_canonical_index =
-            real_module->isorecursive_canonical_type_ids[real_idx];
+            real_module->canonical_type_id(real_idx);
         if (!type_canonicalizer->IsCanonicalSubtype(real_canonical_index,
                                                     canonical_index)) {
           *error_message = "object is not a subtype of expected type";
@@ -3118,8 +3115,7 @@ MaybeHandle<Object> JSToWasmObject(Isolate* isolate, const WasmModule* module,
                                    const char** error_message) {
   CanonicalValueType canonical;
   if (expected.has_index()) {
-    CanonicalTypeIndex index =
-        module->isorecursive_canonical_type_ids[expected.ref_index()];
+    CanonicalTypeIndex index = module->canonical_type_id(expected.ref_index());
     canonical = CanonicalValueType::FromIndex(expected.kind(), index);
   } else {
     canonical = CanonicalValueType{expected};

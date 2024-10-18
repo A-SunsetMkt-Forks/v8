@@ -44,10 +44,7 @@ class WasmLoweringReducer : public Next {
   OpIndex REDUCE(Null)(wasm::ValueType type) {
     OpIndex roots = __ LoadRootRegister();
     RootIndex index =
-        wasm::IsSubtypeOf(type, wasm::kWasmExternRef, module_) ||
-                wasm::IsSubtypeOf(type, wasm::kWasmExnRef, module_)
-            ? RootIndex::kNullValue
-            : RootIndex::kWasmNull;
+        type.use_wasm_null() ? RootIndex::kWasmNull : RootIndex::kNullValue;
     // We load WasmNull as a pointer here and not as a TaggedPointer because
     // WasmNull is stored uncompressed in the IsolateData, and a load of a
     // TaggedPointer loads compressed pointers.
@@ -67,13 +64,9 @@ class WasmLoweringReducer : public Next {
 
   V<Word32> REDUCE(IsNull)(OpIndex object, wasm::ValueType type) {
 #if V8_STATIC_ROOTS_BOOL
-    // TODO(14616): Extend this for shared types.
-    const bool is_wasm_null =
-        !wasm::IsSubtypeOf(type, wasm::kWasmExternRef, module_) &&
-        !wasm::IsSubtypeOf(type, wasm::kWasmExnRef, module_);
-    V<Object> null_value = V<Object>::Cast(
-        __ UintPtrConstant(is_wasm_null ? StaticReadOnlyRoot::kWasmNull
-                                        : StaticReadOnlyRoot::kNullValue));
+    V<Object> null_value = V<Object>::Cast(__ UintPtrConstant(
+        type.use_wasm_null() ? StaticReadOnlyRoot::kWasmNull
+                             : StaticReadOnlyRoot::kNullValue));
 #else
     V<Object> null_value = __ Null(type);
 #endif
@@ -91,8 +84,7 @@ class WasmLoweringReducer : public Next {
         // (3) the object might be a JS object.
         if (null_check_strategy_ == NullCheckStrategy::kExplicit ||
             wasm::IsSubtypeOf(wasm::kWasmI31Ref.AsNonNull(), type, module_) ||
-            wasm::IsSubtypeOf(type, wasm::kWasmExternRef, module_) ||
-            wasm::IsSubtypeOf(type, wasm::kWasmExnRef, module_)) {
+            !type.use_wasm_null()) {
           __ TrapIf(__ IsNull(object, type), trap_id);
         } else {
           // Otherwise, load the word after the map word.
@@ -109,9 +101,10 @@ class WasmLoweringReducer : public Next {
     return object;
   }
 
-  V<Map> REDUCE(RttCanon)(V<FixedArray> rtts, uint32_t type_index) {
+  V<Map> REDUCE(RttCanon)(V<FixedArray> rtts,
+                          wasm::ModuleTypeIndex type_index) {
     int map_offset =
-        OFFSET_OF_DATA_START(FixedArray) + type_index * kTaggedSize;
+        OFFSET_OF_DATA_START(FixedArray) + type_index.index * kTaggedSize;
     return __ Load(rtts, LoadOp::Kind::TaggedBase().Immutable(),
                    MemoryRepresentation::AnyTagged(), map_offset);
   }
@@ -229,9 +222,9 @@ class WasmLoweringReducer : public Next {
   }
 
   V<Any> REDUCE(StructGet)(V<WasmStructNullable> object,
-                           const wasm::StructType* type, uint32_t type_index,
-                           int field_index, bool is_signed,
-                           CheckForNull null_check) {
+                           const wasm::StructType* type,
+                           wasm::ModuleTypeIndex type_index, int field_index,
+                           bool is_signed, CheckForNull null_check) {
     auto [explicit_null_check, implicit_null_check] =
         null_checks_for_struct_op(null_check, field_index);
 
@@ -252,8 +245,9 @@ class WasmLoweringReducer : public Next {
   }
 
   V<None> REDUCE(StructSet)(V<WasmStructNullable> object, V<Any> value,
-                            const wasm::StructType* type, uint32_t type_index,
-                            int field_index, CheckForNull null_check) {
+                            const wasm::StructType* type,
+                            wasm::ModuleTypeIndex type_index, int field_index,
+                            CheckForNull null_check) {
     auto [explicit_null_check, implicit_null_check] =
         null_checks_for_struct_op(null_check, field_index);
 
@@ -750,7 +744,7 @@ class WasmLoweringReducer : public Next {
 
     V<Map> map = __ LoadMapField(object);
 
-    if (module_->types[config.to.ref_index()].is_final) {
+    if (module_->type(config.to.ref_index()).is_final) {
       __ TrapIfNot(__ TaggedEqual(map, rtt.value()), TrapId::kTrapIllegalCast);
       GOTO(end_label);
     } else {
@@ -819,7 +813,7 @@ class WasmLoweringReducer : public Next {
 
     V<Map> map = __ LoadMapField(object);
 
-    if (module_->types[config.to.ref_index()].is_final) {
+    if (module_->type(config.to.ref_index()).is_final) {
       GOTO(end_label, __ TaggedEqual(map, rtt.value()));
     } else {
       // First, check if types happen to be equal. This has been shown to give

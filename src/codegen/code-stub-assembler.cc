@@ -2012,6 +2012,11 @@ TNode<RawPtrT> CodeStubAssembler::LoadCodeEntryFromIndirectPointerHandle(
 
 #endif  // V8_ENABLE_SANDBOX
 
+TNode<JSDispatchHandleT> CodeStubAssembler::InvalidDispatchHandleConstant() {
+  return UncheckedCast<JSDispatchHandleT>(
+      Uint32Constant(kInvalidDispatchHandle));
+}
+
 TNode<Object> CodeStubAssembler::LoadFromParentFrame(int offset) {
   TNode<RawPtrT> frame_pointer = LoadParentFramePointer();
   return LoadFullTagged(frame_pointer, IntPtrConstant(offset));
@@ -16001,10 +16006,10 @@ TNode<Boolean> CodeStubAssembler::InstanceOf(TNode<Object> object,
   {
     // Call to Function.prototype[@@hasInstance] directly without using the
     // Builtins::Call().
-    var_result = CAST(CallJS(Builtin::kFunctionPrototypeHasInstance, context,
-                             inst_of_handler,
-                             UndefinedConstant(),  // new_target
-                             callable, object));
+    var_result = CAST(CallJSBuiltin(Builtin::kFunctionPrototypeHasInstance,
+                                    context, inst_of_handler,
+                                    UndefinedConstant(),  // new_target
+                                    callable, object));
     Goto(&return_result);
   }
 

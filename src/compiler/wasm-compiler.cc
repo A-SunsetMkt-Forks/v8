@@ -399,14 +399,9 @@ Node* WasmGraphBuilder::EffectPhi(unsigned count, Node** effects_and_control) {
 }
 
 Node* WasmGraphBuilder::RefNull(wasm::ValueType type) {
-  // We immediately lower null in wrappers, as they do not go through a lowering
-  // phase.
-  // TODO(thibaudm): Can we use wasm null for exnref?
-  return parameter_mode_ == kInstanceParameterMode ? gasm_->Null(type)
-         : (type == wasm::kWasmExternRef || type == wasm::kWasmNullExternRef ||
-            type == wasm::kWasmExnRef || type == wasm::kWasmNullExnRef)
-             ? LOAD_ROOT(NullValue, null_value)
-             : LOAD_ROOT(WasmNull, wasm_null);
+  // This version is for functions, not wrappers.
+  DCHECK_EQ(parameter_mode_, kInstanceParameterMode);
+  return gasm_->Null(type);
 }
 
 Node* WasmGraphBuilder::RefFunc(uint32_t function_index) {
@@ -2765,11 +2760,13 @@ Node* WasmGraphBuilder::BuildDiv64Call(Node* left, Node* right,
 }
 
 Node* WasmGraphBuilder::IsNull(Node* object, wasm::ValueType type) {
-  // We immediately lower null in wrappers, as they do not go through a lowering
-  // phase.
-  return parameter_mode_ == kInstanceParameterMode
-             ? gasm_->IsNull(object, type)
-             : gasm_->TaggedEqual(object, RefNull(type));
+  // This version is for Wasm functions (i.e. not wrappers):
+  // - they use module-specific types
+  // - they go through a lowering phase later
+  // Both points are different in wrappers, see
+  // WasmWrapperGraphBuilder::IsNull().
+  DCHECK_EQ(parameter_mode_, kInstanceParameterMode);
+  return gasm_->IsNull(object, type);
 }
 
 template <typename... Args>
@@ -2937,7 +2934,8 @@ Node* WasmGraphBuilder::CallDirect(uint32_t index, base::Vector<Node*> args,
   return BuildWasmCall(sig, args, rets, position, GetInstanceData());
 }
 
-Node* WasmGraphBuilder::CallIndirect(uint32_t table_index, uint32_t sig_index,
+Node* WasmGraphBuilder::CallIndirect(uint32_t table_index,
+                                     wasm::ModuleTypeIndex sig_index,
                                      base::Vector<Node*> args,
                                      base::Vector<Node*> rets,
                                      wasm::WasmCodePosition position) {
@@ -2946,7 +2944,7 @@ Node* WasmGraphBuilder::CallIndirect(uint32_t table_index, uint32_t sig_index,
 }
 
 Node* WasmGraphBuilder::BuildIndirectCall(uint32_t table_index,
-                                          uint32_t sig_index,
+                                          wasm::ModuleTypeIndex sig_index,
                                           base::Vector<Node*> args,
                                           base::Vector<Node*> rets,
                                           wasm::WasmCodePosition position,
@@ -3010,7 +3008,7 @@ Node* WasmGraphBuilder::BuildIndirectCall(uint32_t table_index,
                       gasm_->IntPtrConstant(WasmDispatchTable::kSigBias)));
     Node* sig_match = gasm_->Word32Equal(loaded_sig, expected_sig_id);
 
-    if (!env_->module->types[sig_index].is_final) {
+    if (!env_->module->type(sig_index).is_final) {
       // Do a full subtyping check.
       auto end_label = gasm_->MakeLabel();
       gasm_->GotoIf(sig_match, &end_label);
@@ -3214,7 +3212,7 @@ Node* WasmGraphBuilder::ReturnCall(uint32_t index, base::Vector<Node*> args,
 }
 
 Node* WasmGraphBuilder::ReturnCallIndirect(uint32_t table_index,
-                                           uint32_t sig_index,
+                                           wasm::ModuleTypeIndex sig_index,
                                            base::Vector<Node*> args,
                                            wasm::WasmCodePosition position) {
   return BuildIndirectCall(table_index, sig_index, args, {}, position,
@@ -3695,8 +3693,8 @@ std::pair<Node*, BoundsCheckResult> WasmGraphBuilder::BoundsCheckMem(
   return {converted_index, BoundsCheckResult::kDynamicallyChecked};
 }
 
-const Operator* WasmGraphBuilder::GetSafeLoadOperator(int offset,
-                                                      wasm::ValueType type) {
+const Operator* WasmGraphBuilder::GetSafeLoadOperator(
+    int offset, wasm::ValueTypeBase type) {
   int alignment = offset % type.value_kind_size();
   MachineType mach_type = type.machine_type();
   if (COMPRESS_POINTERS_BOOL && mach_type.IsTagged()) {
@@ -3711,8 +3709,8 @@ const Operator* WasmGraphBuilder::GetSafeLoadOperator(int offset,
   return mcgraph()->machine()->UnalignedLoad(mach_type);
 }
 
-const Operator* WasmGraphBuilder::GetSafeStoreOperator(int offset,
-                                                       wasm::ValueType type) {
+const Operator* WasmGraphBuilder::GetSafeStoreOperator(
+    int offset, wasm::ValueTypeBase type) {
   int alignment = offset % type.value_kind_size();
   MachineRepresentation rep = type.machine_representation();
   if (COMPRESS_POINTERS_BOOL && IsAnyTagged(rep)) {
@@ -5524,7 +5522,7 @@ Node* WasmGraphBuilder::DefaultValue(wasm::ValueType type) {
   }
 }
 
-Node* WasmGraphBuilder::StructNew(uint32_t struct_index,
+Node* WasmGraphBuilder::StructNew(wasm::ModuleTypeIndex struct_index,
                                   const wasm::StructType* type, Node* rtt,
                                   base::Vector<Node*> fields) {
   int size = WasmStruct::Size(type);
@@ -5545,7 +5543,7 @@ Node* WasmGraphBuilder::StructNew(uint32_t struct_index,
   return s;
 }
 
-Node* WasmGraphBuilder::ArrayNew(uint32_t array_index,
+Node* WasmGraphBuilder::ArrayNew(wasm::ModuleTypeIndex array_index,
                                  const wasm::ArrayType* type, Node* length,
                                  Node* initial_value, Node* rtt,
                                  wasm::WasmCodePosition position) {
@@ -5641,11 +5639,10 @@ void WasmGraphBuilder::ArrayInitSegment(uint32_t segment_index, Node* array,
   SetSourcePosition(control(), position);
 }
 
-Node* WasmGraphBuilder::RttCanon(uint32_t type_index) {
+Node* WasmGraphBuilder::RttCanon(wasm::ModuleTypeIndex type_index) {
   Node* rtt = graph()->NewNode(gasm_->simplified()->RttCanon(type_index),
                                GetInstanceData());
-  // TODO(366180605): Drop the explicit conversion.
-  return SetType(rtt, wasm::ValueType::Rtt(wasm::ModuleTypeIndex{type_index}));
+  return SetType(rtt, wasm::ValueType::Rtt(type_index));
 }
 
 WasmGraphBuilder::Callbacks WasmGraphBuilder::TestCallbacks(
@@ -7072,6 +7069,14 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     return gasm_->GetBuiltinPointerTarget(builtin);
   }
 
+  Node* IsNull(Node* object, wasm::CanonicalValueType type) {
+    // We immediately lower null in wrappers, as they do not go through a
+    // lowering phase.
+    Node* null = type.use_wasm_null() ? LOAD_ROOT(WasmNull, wasm_null)
+                                      : LOAD_ROOT(NullValue, null_value);
+    return gasm_->TaggedEqual(object, null);
+  }
+
   Node* BuildChangeInt32ToNumber(Node* value) {
     // We expect most integers at runtime to be Smis, so it is important for
     // wrapper performance that Smi conversion be inlined.
@@ -7374,7 +7379,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     gasm_->GotoIf(IsSmi(input), &type_error, BranchHint::kFalse);
     if (type.is_nullable()) {
       auto not_null = gasm_->MakeLabel();
-      gasm_->GotoIfNot(IsNull(input, wasm::kWasmExternRef), &not_null);
+      gasm_->GotoIfNot(IsNull(input, wasm::kCanonicalExternRef), &not_null);
       gasm_->Goto(&done, LOAD_ROOT(WasmNull, wasm_null));
       gasm_->Bind(&not_null);
     }
@@ -7713,7 +7718,12 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
         static_cast<int>(wrapper_sig_->parameter_count());
 
     // Build the start and the JS parameter nodes.
-    Start(wasm_param_count + 5);
+    // TODO(saelo): this should probably be a constant with a descriptive name.
+    // As far as I understand, it's the number of additional parameters in the
+    // JS calling convention. Also there should be a static_assert here that it
+    // matches the number of parameters in the JSTrampolineDescriptor?
+    // static_assert
+    Start(wasm_param_count + 6);
 
     // Create the js_closure and js_context parameters.
     Node* js_closure = Param(Linkage::kJSCallClosureParamIndex, "%closure");
@@ -8026,7 +8036,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
         [[fallthrough]];
       case wasm::ImportCallKind::kJSFunctionArityMismatch: {
         int pushed_count = std::max(expected_arity, wasm_count);
-        base::SmallVector<Node*, 16> args(pushed_count + 7);
+        base::SmallVector<Node*, 16> args(pushed_count + 8);
         int pos = 0;
 
         args[pos++] = callable_node;  // target callable.
@@ -8043,6 +8053,9 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
         args[pos++] = undefined_node;  // new target
         args[pos++] =
             Int32Constant(JSParameterCount(wasm_count));  // argument count
+#ifdef V8_ENABLE_LEAPTIERING
+        args[pos++] = Int32Constant(kPlaceholderDispatchHandle);
+#endif
 
         Node* function_context =
             gasm_->LoadContextFromJSFunction(callable_node);

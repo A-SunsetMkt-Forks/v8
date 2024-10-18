@@ -97,8 +97,8 @@ class TypeCanonicalizer {
 
   // Returns if the type at {sub_index} in {sub_module} is a subtype of the
   // type at {super_index} in {super_module} after canonicalization.
-  V8_EXPORT_PRIVATE bool IsCanonicalSubtype(uint32_t sub_index,
-                                            uint32_t super_index,
+  V8_EXPORT_PRIVATE bool IsCanonicalSubtype(ModuleTypeIndex sub_index,
+                                            ModuleTypeIndex super_index,
                                             const WasmModule* sub_module,
                                             const WasmModule* super_module);
 
@@ -112,8 +112,8 @@ class TypeCanonicalizer {
 
   // Prepares wasm for the provided canonical type index. This reserves enough
   // space in the canonical rtts and the JSToWasm wrappers on the isolate roots.
-  V8_EXPORT_PRIVATE static void PrepareForCanonicalTypeId(Isolate* isolate,
-                                                          int id);
+  V8_EXPORT_PRIVATE static void PrepareForCanonicalTypeId(
+      Isolate* isolate, CanonicalTypeIndex id);
   // Reset the canonical rtts and JSToWasm wrappers on the isolate roots for
   // testing purposes (in production cases canonical type ids are never freed).
   V8_EXPORT_PRIVATE static void ClearWasmCanonicalTypesForTesting(
@@ -122,11 +122,9 @@ class TypeCanonicalizer {
   bool IsFunctionSignature(CanonicalTypeIndex index) const;
 
 #if DEBUG
-  // Check whether a function signature is canonicalized by checking whether the
-  // pointer points into this class's storage.
-  V8_EXPORT_PRIVATE bool Contains(const FunctionSig* sig) const;
-  // TODO(366180605): We probably won't need this, because static typing
-  // provides more reliable guarantees than DCHECKs.
+  // Check whether a supposedly-canonicalized function signature does indeed
+  // live in this class's storage. Useful for guarding casts of signatures
+  // that are entering the typed world.
   V8_EXPORT_PRIVATE bool Contains(const CanonicalSig* sig) const;
 #endif
 

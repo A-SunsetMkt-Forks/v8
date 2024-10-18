@@ -4811,7 +4811,7 @@ class TurboshaftAssemblerOpInterface
     return ReduceIfReachableAssertNotNull(object, type, trap_id);
   }
 
-  V<Map> RttCanon(V<FixedArray> rtts, uint32_t type_index) {
+  V<Map> RttCanon(V<FixedArray> rtts, wasm::ModuleTypeIndex type_index) {
     return ReduceIfReachableRttCanon(rtts, type_index);
   }
 
@@ -4839,14 +4839,14 @@ class TurboshaftAssemblerOpInterface
   }
 
   V<Any> StructGet(V<WasmStructNullable> object, const wasm::StructType* type,
-                   uint32_t type_index, int field_index, bool is_signed,
-                   CheckForNull null_check) {
+                   wasm::ModuleTypeIndex type_index, int field_index,
+                   bool is_signed, CheckForNull null_check) {
     return ReduceIfReachableStructGet(object, type, type_index, field_index,
                                       is_signed, null_check);
   }
 
   void StructSet(V<WasmStructNullable> object, V<Any> value,
-                 const wasm::StructType* type, uint32_t type_index,
+                 const wasm::StructType* type, wasm::ModuleTypeIndex type_index,
                  int field_index, CheckForNull null_check) {
     ReduceIfReachableStructSet(object, value, type, type_index, field_index,
                                null_check);
@@ -5223,11 +5223,11 @@ class Assembler : public AssemblerData,
   Block* NewLoopHeader() { return this->output_graph().NewLoopHeader(); }
   Block* NewBlock() { return this->output_graph().NewBlock(); }
 
-#if V8_CC_GNU
-  bool Bind(Block* block) {
-#else
-  V8_INLINE bool Bind(Block* block) {
+// This condition is true for any compiler except GCC.
+#if defined(__clang__) || !defined(V8_CC_GNU)
+  V8_INLINE
 #endif
+  bool Bind(Block* block) {
 #ifdef DEBUG
     set_conceptually_in_a_block(true);
 #endif

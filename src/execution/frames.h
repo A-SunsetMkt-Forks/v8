@@ -180,6 +180,7 @@ class StackFrame {
     Address callee_pc = kNullAddress;
     Address* constant_pool_address = nullptr;
     bool is_profiler_entry_frame = false;
+    bool is_stack_exit_frame = false;
   };
 
   // Convert a stack frame type to a marker that can be stored on the stack.
@@ -301,6 +302,7 @@ class StackFrame {
   bool is_profiler_entry_frame() const {
     return state_.is_profiler_entry_frame;
   }
+  bool is_stack_exit_frame() const { return state_.is_stack_exit_frame; }
 
   // Skip authentication of the PC, when using CFI. Used in the profiler, where
   // in certain corner-cases we do not use an address on the stack, which would
@@ -346,7 +348,10 @@ class StackFrame {
 
   // Search for the code associated with this frame.
   V8_EXPORT_PRIVATE Tagged<Code> LookupCode() const;
+  V8_EXPORT_PRIVATE std::pair<Tagged<Code>, int> LookupCodeAndOffset() const;
   V8_EXPORT_PRIVATE Tagged<GcSafeCode> GcSafeLookupCode() const;
+  V8_EXPORT_PRIVATE std::pair<Tagged<GcSafeCode>, int>
+  GcSafeLookupCodeAndOffset() const;
 
   virtual void Iterate(RootVisitor* v) const = 0;
   void IteratePc(RootVisitor* v, Address* constant_pool_address,
